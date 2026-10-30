@@ -53,7 +53,7 @@ GROUPS = {
     "grp_analysis": ["analyze", "analyse", "analysis", "analyst", "analytics", "analytical", "analyzing"],
     "grp_manage": ["manage", "manager", "management", "managing", "supervise", "supervisor", "supervision", "oversee"],
     "grp_lead": ["lead", "leader", "leadership", "leading", "led"],
-    "grp_communication": ["communicate", "communication", "communications", "communicator"],
+    "grp_communication": ["communicate", "communication", "communications", "communicator", "present", "presented", "presenting", "presentation", "presentations", "briefed", "briefing"],
     "grp_collab": ["collaborate", "collaboration", "collaborative", "teamwork", "cooperate", "cooperation"],
     "grp_report": ["report", "reporting", "dashboard", "dashboards"],
     "grp_customer": ["customer", "customers", "client", "clients"],
@@ -149,6 +149,8 @@ def stem_set(text):
                 break
     if stems & {"excel", "powerpoint"}:  # using Excel or PowerPoint implies Microsoft Office
         stems.update({"office", "ms", "microsoft"})
+    if "sql" in stems:  # SQL work implies relational databases
+        stems.update({"relational", stem("database")})
     if "edu_phd" in stems:
         stems.update({"edu_master", "edu_bachelor"})
     if "edu_master" in stems:
@@ -619,6 +621,12 @@ CATEGORIES = [
          {"title": "Coursera: courses (many free to audit)", "url": "https://www.coursera.org/", "note": "Check which parts are free."},
      ]},
 ]
+CATEGORIES.insert(0, {"id": "statistics", "keywords": ["statistic", "statistical", "statistics", "regression", "hypothesis", "probability", "inference"],
+     "advice": "Work one example end to end: pick a public dataset, state a hypothesis, run a test or a simple regression, and write what the result does and does not show.",
+     "resources": [
+         {"title": "Khan Academy: Statistics and probability", "url": "https://www.khanacademy.org/math/statistics-probability", "note": "Free lessons."},
+         {"title": "Kaggle Learn: free micro-courses", "url": "https://www.kaggle.com/learn", "note": "Data and machine learning basics."},
+     ]})
 for _cat in CATEGORIES:
     _cat["stems"] = {stem(k) if not k.startswith(("grp_", "edu_")) else k for k in _cat["keywords"]}
 
