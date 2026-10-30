@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resume Skill-Gap Assistant</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--card:#f4f4f6;--line:#d0d0d6;--acc:#2255cc}
+@media(prefers-color-scheme:dark){:root{--bg:#16171a;--fg:#eee;--card:#202226;--line:#3a3c42;--acc:#7aa2ff}}
+body{font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg);max-width:900px;margin:0 auto;padding:16px}
+textarea,select{width:100%;box-sizing:border-box;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer;margin:6px 6px 6px 0}
+button.alt{background:var(--card);color:var(--fg);border:1px solid var(--line)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0}
+.warn{border-left:4px solid var(--acc)}
+</style></head><body>
+<h1>Resume Skill-Gap Assistant</h1>
+<div class="card warn"><b>Demo uses synthetic data only.</b> Do not paste a real resume. This is a learning aid, not a hiring decision: a missing keyword does not prove someone lacks a skill.</div>
+<p>
+<button class="alt" onclick="load(0)">Sample 1: data analyst</button>
+<button class="alt" onclick="load(1)">Sample 2: marketing officer</button></p>
+<h3>Resume (synthetic)</h3><textarea id="resume" rows="9"></textarea>
+<h3>Job description</h3><textarea id="jd" rows="9"></textarea>
+<p>Strictness <select id="strict" style="width:auto"><option>Lenient</option><option selected>Balanced</option><option>Strict</option></select>
+<button id="go" onclick="run()">Analyse</button></p>
+<div id="out"></div>
+<script>
+const S=[{r:`Aisha Demo (synthetic)
+Experience
+- Built weekly sales dashboards in Excel and Power BI for a retail team.
+- Cleaned and analysed customer data using SQL and Python (pandas).
+- Presented monthly findings to managers.
+Education
+- BSc Statistics`,j:`Requirements
+- Experience with SQL and relational databases
+- Proficiency in Python for data analysis
+- Experience building dashboards in Tableau or Power BI
+- Knowledge of A/B testing and statistical modelling
+- Strong communication skills
+- Bachelor's degree in a quantitative field`},
+{r:`Bilal Demo (synthetic)
+Experience
+- Managed the company social media accounts and wrote weekly posts.
+- Organised two customer events and handled supplier communication.
+Education
+- BBA Marketing`,j:`Responsibilities
+- Plan and run email marketing campaigns
+- Experience with SEO and Google Analytics
+- Manage social media channels
+- Create reports on campaign performance
+- Bachelor's degree in marketing or related field`}];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function load(i){$("resume").value=S[i].r;$("jd").value=S[i].j}
+function md(t){return esc(t).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/\n/g,"<br>")}
+async function run(){
+  $("go").disabled=true;$("out").innerHTML="<p>Analysing... (the plan can take up to 30 seconds)</p>";
+  try{
+    const r=await fetch("/api/analyse",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({resume:$("resume").value,jd:$("jd").value,strictness:$("strict").value})});
+    const d=await r.json(); if(d.error) throw new Error(d.error);
+    let h="<h2>Requirement check</h2>";
+    d.results.forEach(x=>h+=`<div class="card"><b>${esc(x.status)}</b>: ${esc(x.requirement)}<br><small>Evidence: ${esc(x.evidence)}</small></div>`);
+    h+="<h2>Top gaps and free resources</h2>";
+    d.gaps.forEach(g=>h+=`<div class="card"><b>${esc(g.requirement)}</b><br>${esc(g.advice)}<ul>`+
+      g.resources.map(l=>`<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title)}</a> ${esc(l.note)}</li>`).join("")+"</ul></div>");
+    h+=`<h2>Four-week plan</h2><div class="card">${md(d.plan)}</div><small>Source: ${esc(d.plan_source)} | tokens in/out: ${d.tokens.input}/${d.tokens.output}</small>`;
+    $("out").innerHTML=h;
+  }catch(e){$("out").innerHTML=`<div class="card">Error: ${esc(e.message)}</div>`}
+  $("go").disabled=false}
+load(0);
+</script></body></html>
