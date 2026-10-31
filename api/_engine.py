@@ -1,35 +1,35 @@
 """
 AI Resume & Skill Development Assistant (generic version)
- 
+
 Works for any role or industry. Pipeline:
   1. Extract requirements from the job description (JD) with plain-text rules.
   2. Pull the key terms out of each requirement (no hardcoded skill list).
   3. Match those terms against the resume with light stemming + a few synonyms.
   4. Suggest practice tasks and free learning links per gap.
   5. Optionally, a local LLM (Ollama) writes a four-week plan.
- 
+
 Run:  streamlit run app_genai_resume_assistant_generic.py
 """
 import datetime
 import hashlib
 import re
 from urllib.parse import quote_plus
- 
+
 MODEL_NAME = "llama3.2:3b"
- 
+
 CLEAR = "Clearly Evidenced"
 PARTIAL = "Partially Evidenced"
 NONE = "Not Evidenced"
 MANUAL = "Needs Manual Check"
 STATUSES = [CLEAR, PARTIAL, MANUAL, NONE]
- 
+
 # (best-sentence score for CLEAR, overall coverage for CLEAR, coverage for PARTIAL)
 STRICTNESS = {
     "Lenient": (0.50, 0.75, 0.25),
     "Balanced": (0.60, 0.85, 0.34),
     "Strict": (0.75, 0.95, 0.50),
 }
- 
+
 # ----------------------------------------------------------------------------
 # Text utilities
 # ----------------------------------------------------------------------------
@@ -47,7 +47,7 @@ worked ensure ensuring support supporting help helping year years month months n
 strongly highly high sound clear detailed closely obtain particularly various key field
 discipline professional part effective others comprehensive extensive thorough
 """.split())
- 
+
 # Words that mean the same thing for matching purposes. Keep this list short and safe.
 GROUPS = {
     "grp_analysis": ["analyze", "analyse", "analysis", "analyst", "analytics", "analytical", "analyzing"],
@@ -68,7 +68,7 @@ GROUPS = {
     "edu_master": ["master", "masters", "msc", "mba", "postgraduate", "m.sc", "mcom", "mphil", "m.s", "m.a", "m.b.a"],
     "edu_phd": ["phd", "doctorate", "doctoral"],
 }
- 
+
 BRITISH = [
     ("organis", "organiz"), ("prioritis", "prioritiz"), ("summaris", "summariz"), ("optimis", "optimiz"),
     ("standardis", "standardiz"), ("utilis", "utiliz"), ("recognis", "recogniz"), ("specialis", "specializ"),
@@ -76,14 +76,14 @@ BRITISH = [
     ("finalis", "finaliz"), ("categoris", "categoriz"), ("behaviour", "behavior"), ("programme", "program"),
     ("centre", "center"), ("licence", "license"), ("catalogue", "catalog"),
 ]
- 
+
 TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[+#]+|\.[A-Za-z0-9]+)*")
- 
- 
+
+
 def tokenize(text):
     return TOKEN_RE.findall(text or "")
- 
- 
+
+
 def _raw_stem(word):
     """Very light stemmer: plurals, -ing, -ed, -ly, trailing e, doubled consonants."""
     w = word.lower()
@@ -107,20 +107,20 @@ def _raw_stem(word):
         if w.endswith("e") and len(w) > 4:
             w = w[:-1]
     return w
- 
- 
+
+
 CANON = {}
 for _canon, _words in GROUPS.items():
     for _w in _words:
         CANON[_w] = _canon
         CANON[_raw_stem(_w)] = _canon
- 
- 
+
+
 def stem(word):
     w = word.lower()
     return CANON.get(w) or CANON.get(_raw_stem(w)) or _raw_stem(w)
- 
- 
+
+
 # Generic lead-in verbs in job ads. They count for less and never form "phrases".
 ACTION_VERBS = ["conduct", "prepare", "develop", "assess", "liaise", "obtain", "maintain", "monitor", "review",
                 "provide", "deliver", "coordinate", "perform", "execute", "undertake", "contribute", "assist",
@@ -129,12 +129,12 @@ ACTION_STEMS = {_raw_stem(w) for w in ACTION_VERBS}
 # 'macroeconomic' should also count as 'economic'
 COMPOUND_PREFIXES = ("macro", "micro", "multi", "inter", "intra", "cross", "sub", "non", "self", "semi",
                      "anti", "geo", "bio", "cyber")
- 
- 
+
+
 def normalise_text(text):
     return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
- 
- 
+
+
 def stem_set(text):
     """All meaningful stems in a piece of text, with education levels implied upward."""
     stems = set()
@@ -156,8 +156,8 @@ def stem_set(text):
     if "edu_master" in stems:
         stems.add("edu_bachelor")
     return stems
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Reading files
 # ----------------------------------------------------------------------------
@@ -179,8 +179,8 @@ def extract_resume_text(uploaded_file):
     if filename.endswith(".txt"):
         return uploaded_file.getvalue().decode("utf-8-sig", errors="replace")
     raise ValueError("Unsupported resume format. Please upload PDF, DOCX, or TXT.")
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Job description -> requirements
 # ----------------------------------------------------------------------------
@@ -204,15 +204,15 @@ CUE_WORDS = (
     "experience", "proficien", "knowledge", "ability", "skilled", "familiar", "degree", "years",
     "responsible", "manage", "must", "required", "strong", "understanding", "certif",
 )
- 
- 
+
+
 SMALL_WORDS = {"and", "or", "of", "the", "in", "for", "to", "a", "an", "on", "at", "with", "&"}
- 
- 
+
+
 def _title_like(text):
     return all(w[:1].isupper() or w.lower() in SMALL_WORDS or not w[:1].isalpha() for w in text.split())
- 
- 
+
+
 def _is_heading(line):
     stripped = line.strip()
     if stripped.startswith("#"):
@@ -227,20 +227,20 @@ def _is_heading(line):
     lowered = stripped.lower()
     return (stripped.isupper() or lowered.startswith(DROP_STARTS)
             or (_title_like(stripped) and any(k in lowered for k in KEEP_HEADS + DROP_HEADS)))
- 
- 
+
+
 def extract_requirements(job_description, limit=40):
     """Pull requirement lines out of a pasted JD. Works with or without headings."""
     requirements, seen = [], set()
     mode = "bullets"  # bullets = only bulleted lines, keep = also plain lines, drop = ignore
- 
+
     def add(item):
         item = item.strip(" \t;•")
         key = normalise_text(item)
         if len(item) >= 4 and key not in seen:
             seen.add(key)
             requirements.append(item)
- 
+
     for raw in (job_description or "").splitlines():
         line = raw.strip()
         if not line or META_RE.match(line):
@@ -261,21 +261,21 @@ def extract_requirements(job_description, limit=40):
             add(bullet.group(1))
         elif mode == "keep" and 3 <= len(line.split()) <= 40:
             add(line)
- 
+
     if not requirements:  # JD is just paragraphs: keep sentences that sound like requirements
         sentences = re.split(r"(?<=[.!?])\s+|\n+", job_description or "")
         for sentence in sentences:
             if any(cue in sentence.lower() for cue in CUE_WORDS) and 3 <= len(sentence.split()) <= 40:
                 add(sentence)
     return requirements[:limit]
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Matching
 # ----------------------------------------------------------------------------
 JOINERS = {"and", "or", "of", "to", "in", "for", "with", "the", "a", "an", "on", "by", "as", "&"}
- 
- 
+
+
 def join_wrapped_lines(resume_text):
     """PDF text wraps mid-sentence. Re-join a line to the previous one when it clearly continues it."""
     merged = []
@@ -293,32 +293,32 @@ def join_wrapped_lines(resume_text):
         else:
             merged.append(line)
     return "\n".join(merged)
- 
- 
+
+
 def clip(text, limit=300):
     return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "..."
- 
- 
+
+
 def split_resume_sentences(resume_text):
     resume_text = join_wrapped_lines(resume_text)
     parts = re.split(r"\n+|\s*[|•]\s*|(?<=[.!?])\s+(?=[A-Z0-9\"'])", resume_text or "")
     return [p.strip(" \t•-\u2022") for p in parts if len(p.strip()) >= 12]
- 
- 
+
+
 LABEL_RE = re.compile(r"^\s*(?:education|experience|qualifications?|skills?|requirements?)\s*:\s*", re.I)
- 
- 
+
+
 def clean_label(requirement):
     """Drop a leading label such as 'Education:' so it is not matched against resume headings."""
     return LABEL_RE.sub("", requirement)
- 
- 
+
+
 # In "Bachelor's degree in a quantitative field" these words describe the field loosely. The resume names the
 # actual subject (Statistics), so requiring the word itself caused false gaps.
 DEGREE_FILLER = {"quantitative", "technical", "related", "similar", "equivalent", "discipline", "disciplines",
                  "subject", "subjects", "area", "areas", "relevant", "analytical", "scientific"}
- 
- 
+
+
 def key_terms(requirement, limit=8):
     """Meaningful terms in a requirement as a list of {stem, display, weight}."""
     found = {}
@@ -345,11 +345,11 @@ def key_terms(requirement, limit=8):
             found[st] = {"stem": st, "display": tok, "weight": weight}
     ranked = sorted(found.values(), key=lambda t: (-t["weight"], -len(t["stem"])))
     return ranked[:limit]
- 
- 
+
+
 CHUNK_RE = re.compile(r"[,;:()\[\]/]|\s[-–—]\s|\.\s")
- 
- 
+
+
 def stem_sequence(text):
     """Ordered stems of meaningful words. None marks a punctuation break so phrases cannot span commas."""
     seq = []
@@ -357,8 +357,8 @@ def stem_sequence(text):
         seq.extend(stem(t.lower()) for t in tokenize(chunk) if t.lower() not in STOPWORDS)
         seq.append(None)
     return seq
- 
- 
+
+
 def phrase_pairs(requirement, terms):
     """Adjacent key-term pairs inside the requirement, e.g. (fixed, income) or (asset, management)."""
     wanted = {t["stem"] for t in terms}
@@ -378,12 +378,12 @@ def phrase_pairs(requirement, terms):
                 pairs.add((prev, current))
             prev, prev_action = current, is_action
     return sorted(pairs)
- 
- 
+
+
 def has_pair(seq, first, second):
     return any(a == first and b == second for a, b in zip(seq, seq[1:]))
- 
- 
+
+
 def weighted_coverage(terms, pairs, stems, seq):
     """Share of the requirement found. Each exact phrase ('fixed income') is a half-weight extra item, so scattered
     single words ('income statement') score lower than the real phrase."""
@@ -401,8 +401,8 @@ def weighted_coverage(terms, pairs, stems, seq):
         credit += t["weight"]
         (loose if t["stem"] in in_pair and t["stem"] not in confirmed else solid).append(t)
     return credit / total, solid, loose
- 
- 
+
+
 YEARS_RE = re.compile(r"(\d{1,2})\s*\+?\s*(?:(?:-|–|—|to)\s*(\d{1,2})\s*)?\+?\s*years?", re.I)
 MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec"
 RANGE_RE = re.compile(
@@ -412,18 +412,18 @@ RANGE_RE = re.compile(
 )
 EDU_LINE_RE = re.compile(
     r"university|college|school|bachelor|master|degree|diploma|mba|bsc|msc|phd|gpa|cgpa|certificat", re.I)
- 
- 
+
+
 def required_years(requirement):
     match = YEARS_RE.search(requirement)
     return int(match.group(1)) if match else None
- 
- 
+
+
 def _month_index(abbr):
     return MONTHS.split("|").index(abbr.lower()[:4] if abbr.lower().startswith("sept") else abbr.lower()[:3]) \
         if abbr else None
- 
- 
+
+
 def estimate_experience_years(resume_text):
     """Rough total of dated work ranges (overlaps merged, education lines skipped). None if no dates."""
     today = datetime.date.today()
@@ -453,8 +453,8 @@ def estimate_experience_years(resume_text):
         else:
             merged.append([start, end])
     return round(sum(e - s for s, e in merged), 1)
- 
- 
+
+
 def analyse_resume(requirements, resume_text, strictness="Balanced"):
     clear_best, clear_cov, partial_cov = STRICTNESS[strictness]
     sentences = split_resume_sentences(resume_text)
@@ -463,14 +463,14 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
     resume_seq = stem_sequence(resume_text)
     resume_years = estimate_experience_years(resume_text)
     results = []
- 
+
     for index, requirement in enumerate(requirements, start=1):
         terms = key_terms(requirement)
         pairs = phrase_pairs(requirement, terms)
         years_needed = required_years(requirement)
         coverage, solid, loose = weighted_coverage(terms, pairs, resume_stems, resume_seq)
         missing = [t for t in terms if t["stem"] not in resume_stems]
- 
+
         best_score, best_sentence = 0.0, None
         for sentence, stems, seq in sentence_data:
             if not terms:
@@ -478,7 +478,7 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
             score = weighted_coverage(terms, pairs, stems, seq)[0]
             if score > best_score or (score == best_score and best_sentence and len(sentence) < len(best_sentence)):
                 best_score, best_sentence = score, sentence
- 
+
         note = ""
         if not terms:
             if years_needed and resume_years is not None:
@@ -493,7 +493,7 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
             status = PARTIAL
         else:
             status = NONE
- 
+
         if terms and years_needed and status in (CLEAR, PARTIAL):
             if resume_years is None:
                 status = MANUAL
@@ -503,7 +503,7 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
                     status = PARTIAL
                 note = (f"Estimated {resume_years} years of dated roles versus {years_needed} required "
                         "(rough estimate, all roles combined).")
- 
+
         found_terms = [t["display"] for t in solid + loose]
         if status == NONE:
             evidence = "No sentence in the resume covers this requirement."
@@ -521,7 +521,7 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
                 explanation = "Some key terms appear, but not all parts of the requirement are shown. Confirm manually."
         if note and status != MANUAL:
             explanation += " " + note
- 
+
         results.append({
             "id": index, "requirement": requirement, "status": status,
             "evidence": evidence, "explanation": explanation,
@@ -529,8 +529,8 @@ def analyse_resume(requirements, resume_text, strictness="Balanced"):
             "missing": [t["display"] for t in missing], "terms": [t["display"] for t in terms],
         })
     return results
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Advice and free resources (category hints are for advice only, never for matching)
 # ----------------------------------------------------------------------------
@@ -595,7 +595,7 @@ CATEGORIES = [
      "advice": "Use a fictional company to prepare a simple ledger, a bank reconciliation and a monthly summary. Check that totals reconcile and note each check you performed.",
      "resources": [
          {"title": "Khan Academy: Finance and capital markets", "url": "https://www.khanacademy.org/economics-finance-domain", "note": "Free lessons."},
-         {"title": "OpenLearn: free business and finance courses", "url": "https://www.open.edu/openlearn/money-business", "note": "Free self-paced learning."},
+         {"title": "OpenLearn: free business and finance courses", "url": "https://www.open.edu/openlearn/money-management", "note": "Free self-paced learning."},
      ]},
     {"id": "design", "keywords": ["design", "ui", "ux", "figma", "photoshop", "illustrator", "wireframe", "prototype",
                                    "creative", "branding", "typography"],
@@ -638,7 +638,7 @@ CATEGORIES.insert(0, {"id": "statistics", "keywords": ["statistic", "statistical
      ]})
 for _cat in CATEGORIES:
     _cat["stems"] = {stem(k) if not k.startswith(("grp_", "edu_")) else k for k in _cat["keywords"]}
- 
+
 DEFAULT_ADVICE = ("Turn this requirement into a checklist. Identify what you need to know, practise with a realistic "
                   "example, and save a work sample or note that shows what you learned.")
 DEFAULT_RESOURCES = [
@@ -646,8 +646,8 @@ DEFAULT_RESOURCES = [
     {"title": "Coursera (many courses free to audit)", "url": "https://www.coursera.org/", "note": "Check which parts are free."},
     {"title": "Khan Academy", "url": "https://www.khanacademy.org/", "note": "Free lessons in many subjects."},
 ]
- 
- 
+
+
 def search_links(terms):
     query = " ".join(terms[:3]).strip()
     if not query:
@@ -657,8 +657,8 @@ def search_links(terms):
         {"title": f"Coursera search: {query}", "url": "https://www.coursera.org/search?query=" + quote_plus(query), "note": "Many courses can be audited for free."},
         {"title": f"Web search: free {query} course", "url": "https://duckduckgo.com/?q=" + quote_plus("free " + query + " course"), "note": "General search for free courses."},
     ]
- 
- 
+
+
 def search_query_terms(requirement, terms):
     """Words for a search link: real phrases first (fixed income), else the strongest nouns."""
     display = {t["stem"]: t["display"] for t in terms}
@@ -670,8 +670,8 @@ def search_query_terms(requirement, terms):
     if not words:
         words = [t["display"] for t in terms if t["weight"] > 0.5][:3]
     return words[:4]
- 
- 
+
+
 def improvement_advice(requirement):
     """Return (advice text, resource list) for any requirement."""
     terms = key_terms(requirement)
@@ -694,8 +694,8 @@ def improvement_advice(requirement):
             resources.append(res)
             seen.add(res["url"])
     return advice, resources
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Local AI helpers
 # ----------------------------------------------------------------------------
@@ -704,32 +704,32 @@ def call_local_ai(messages, num_predict=550, model=None):
     response = ollama.chat(model=model or MODEL_NAME, messages=messages,
                            options={"temperature": 0.2, "num_predict": num_predict})
     return response["message"]["content"]
- 
- 
+
+
 def strip_unknown_links(text, allowed_urls):
     """Remove any URL the model invented that is not in the supplied list."""
     allowed = {u.rstrip("/") for u in allowed_urls}
- 
+
     def check(match):
         url = match.group(0).rstrip(").,;]")
         return match.group(0) if url.rstrip("/") in allowed else ""
     text = re.sub(r"https?://[^\s)\]]+", check, text)
     text = re.sub(r"\(\s*\)|\[\s*\]", "", text)
     return re.sub(r"[ \t]{2,}", " ", text)
- 
- 
+
+
 def top_gaps(results, limit=5):
     order = {NONE: 0, PARTIAL: 1, MANUAL: 2}
     gaps = [r for r in results if r["status"] != CLEAR]
     return sorted(gaps, key=lambda r: order.get(r["status"], 3))[:limit]
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Streamlit app
 # ----------------------------------------------------------------------------
 def main():
     import streamlit as st
- 
+
     st.set_page_config(page_title="AI Resume & Skill Development Assistant", layout="wide")
     st.title("AI Resume & Skill Development Assistant")
     st.write(
@@ -742,12 +742,12 @@ def main():
         "lacks a skill, so check the evidence manually. Links are curated free resources or search links; "
         "some third-party sites may have paid extras."
     )
- 
+
     model = st.sidebar.text_input("Local AI model", MODEL_NAME,
                                   help="Larger models (for example llama3.1:8b or qwen2.5:7b) write better plans if your PC can run them. Run 'ollama pull <name>' first.")
     strictness = st.sidebar.selectbox("Matching strictness", list(STRICTNESS), index=1,
                                       help="Lenient flags fewer gaps. Strict needs more of a requirement's terms in the resume.")
- 
+
     st.header("1. Upload Your Resume")
     resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "txt"])
     resume_text = ""
@@ -761,11 +761,11 @@ def main():
                 st.warning("No readable text was found. A scanned PDF may need OCR.")
         except Exception as exc:
             st.error(f"Could not read the resume: {exc}")
- 
+
     st.header("2. Enter the Job Description")
     job_description = st.text_area("Paste the job description here", height=220, key="jd_input",
                                    placeholder="Paste the responsibilities, required skills and qualifications...")
- 
+
     detected = extract_requirements(job_description) if job_description.strip() else []
     with st.expander(f"Requirements detected from the job description ({len(detected)})"):
         for number, item in enumerate(detected, start=1):
@@ -775,7 +775,7 @@ def main():
     extra_text = st.text_area("Missing a requirement? Add it here (one per line)", height=100, key="extra_reqs",
                               help="Use this if a line from the job description was not detected above.")
     fingerprint = hashlib.sha256((resume_text + "||" + job_description + "||" + extra_text + "||" + strictness).encode("utf-8", errors="ignore")).hexdigest()
- 
+
     if st.button("Analyse Resume", type="primary"):
         if not resume:
             st.warning("Please upload a resume first.")
@@ -798,17 +798,17 @@ def main():
                     st.session_state["fingerprint"] = fingerprint
                     st.session_state.pop("learning_plan", None)
                 st.success(f"Compared {len(requirements)} requirements.")
- 
+
     results = st.session_state.get("results")
     current = results is not None and st.session_state.get("fingerprint") == fingerprint
- 
+
     if current:
         st.header("3. Resume Analysis")
         st.caption("Results come from keyword matching with conservative rules. Check the evidence manually.")
         cols = st.columns(4)
         for col, status in zip(cols, STATUSES):
             col.metric(status, sum(1 for r in results if r["status"] == status))
- 
+
         for status in STATUSES:
             with st.expander(status, expanded=(status != CLEAR)):
                 section = [r for r in results if r["status"] == status]
@@ -823,7 +823,7 @@ def main():
                                     f"**Terms not found:** {', '.join(item['missing']) or 'none'}")
                     st.markdown(f"**Explanation:** {item['explanation']}")
                     st.divider()
- 
+
         gaps = [r for r in results if r["status"] != CLEAR]
         st.header("4. Areas for Improvement")
         if not gaps:
@@ -837,7 +837,7 @@ def main():
                 for res in resources:
                     st.markdown(f"- [{res['title']}]({res['url']}) — {res['note']}")
                 st.markdown("**Proof of progress:** Save a practice exercise, work sample or an accurate resume bullet that shows the skill.")
- 
+
         st.header("5. Personalised Four-Week Learning Plan")
         st.write("Optional. Your local AI model turns the top five gaps into weekly actions.")
         if st.button("Generate AI Learning Plan"):
@@ -877,7 +877,7 @@ def main():
                 st.markdown(f"- [{res['title']}]({res['url']}) — {res['note']}")
     elif results is not None:
         st.info("The resume, job description or strictness changed. Click Analyse Resume to refresh.")
- 
+
     st.header("6. Optional: Extract Required Skills with AI")
     if st.button("Extract Required Skills with AI"):
         if not job_description.strip():
@@ -892,7 +892,7 @@ def main():
                 st.markdown(skills)
             except Exception as exc:
                 st.error(f"Could not extract skills: {exc}")
- 
+
     st.header("7. Optional: Test Local AI Connection")
     if st.button("Test AI Connection"):
         try:
@@ -900,7 +900,7 @@ def main():
             st.success(reply.strip())
         except Exception as exc:
             st.error(f"AI connection failed: {exc}")
- 
- 
+
+
 if __name__ == "__main__":
     main()
